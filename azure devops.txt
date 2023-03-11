@@ -1,0 +1,111 @@
+==============================================================
+AZURE DEVOPS
+==============================================================
+1. IMPORT REPO FROM GITHUB
+2.PIPELINE
+= # Maven
+
+# Build your Java project and run tests with Apache Maven.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/java
+
+trigger:
+- master
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- task: Maven@3
+  inputs:
+    mavenPomFile: 'pom.xml'
+    mavenOptions: '-Xmx3072m'
+    javaHomeOption: 'JDKVersion'
+    jdkVersionOption: '1.8'
+    jdkArchitectureOption: 'x64'
+    publishJUnitResults: true
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'
+    goals: 'package'
+- task: Docker@2
+  inputs:
+    repository: 'laxmi'
+    command: 'build'
+    Dockerfile: '**/Dockerfile'
+- task: ECRPushImage@1
+  inputs:
+    awsCredentials: 'aws'
+    regionName: 'us-east-1'
+    imageSource: 'imageid'
+    sourceImageId: 'laxmi:$(Build.BuildId)'
+    repositoryName: 'laxmi'
+
+
+- task: KubernetesManifest@0
+  inputs:
+    action: 'deploy'
+    kubernetesServiceConnection: 'k8s'
+    manifests: 'mavenwebappdeployment.yaml'
+== IMPORT AWS EXTENTION
+IN SERVICE CONNECTION WE GIVE AWS K8S 
+IN K8S SERVICE CONNECTION WE NEED TO DO SOME CONFIGURATION
+ aws eks update-kubeconfig --name devopsthehardway-cluster --region us-east-1
+ refer below link for service connection
+ https://stackoverflow.com/questions/56914173/how-to-deploy-to-aws-kubernetes-from-azure-devops
+ vi serviceconnection.yaml
+ apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deploy-robot
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: deploy-robot-secret
+  annotations:
+    kubernetes.io/service-account.name: deploy-robot
+type: kubernetes.io/service-account-token
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: deploy-robot-role
+  namespace: default
+rules: # ## Customize these to meet your requirements ##
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["create", "delete","*"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["create", "delete"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "watch","list","create"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalautoscalers"]
+  verbs: ["patch","*"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: global-rolebinding
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: deploy-robot
+  namespace: default
+roleRef:
+  kind: Role
+  name: deploy-robot-role
+  apiGroup: rbac.authorization.k8s.io
+==============================================================================================
+ kubectl get serviceAccounts <service-account-name> -n <namespace> -o=jsonpath={.secrets[*].name}
+ #kubectl get serviceAccounts deploy-robot -n default -o=jsonpath={.secrets[*].name}
+  kubectl get secret deploy-robot-secret -n default -o json(here we get json we need to paste it in service connection)
+  
+- task: KubernetesManifest@0
+  inputs:
+    action: 'deploy'
+    kubernetesServiceConnection: 'k8s'
+    manifests: 'mavenwebappdeployment.yaml'
+=====================================================
